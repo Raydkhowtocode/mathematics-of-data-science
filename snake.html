@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Retro Snake 🐍</title>
+<style>
+  :root{
+    --scale: 24;       /* visual pixel size */
+    --w: 32;           /* grid width  */
+    --h: 22;           /* grid height */
+    --bg: #0b0f14;     /* background  */
+    --fg: #3aff64;     /* snake head  */
+    --fg2:#1ed155;     /* snake body  */
+    --food:#ff4455;    /* apple       */
+    --hud:#a8ffb5;     /* text color  */
+  }
+  html, body { height: 100%; }
+  body{
+    margin:0; display:grid; place-items:center; background: radial-gradient(1200px 600px at 50% 30%, #0e1622 0%, #070b11 60%, #05070b 100%);
+    color: var(--hud); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; letter-spacing: .5px;
+  }
+  .wrap{ display:grid; gap:10px; place-items:center; }
+  .hud{ display:flex; gap:12px; align-items:center; font-weight:700; }
+  .hud .pill{ background:#0d1521; padding:6px 10px; border-radius:999px; border:1px solid #1b2a3f; box-shadow: inset 0 0 0 1px rgba(255,255,255,.03); }
+  .btn{ appearance:none; border:1px solid #1b2a3f; background:#0d1521; color:var(--hud); padding:8px 14px; border-radius:10px; cursor:pointer; font-weight:700; }
+
+  .frame{ position:relative; width: calc(var(--w) * var(--scale) * 1px); height: calc(var(--h) * var(--scale) * 1px);
+          border:2px solid #1b2a3f; border-radius:12px; box-shadow: 0 20px 60px rgba(0,0,0,.5), inset 0 0 40px rgba(0,0,0,.5);
+          background: #000; overflow:hidden; }
+  canvas{ width:100%; height:100%; image-rendering: pixelated; image-rendering: crisp-edges; display:block; }
+  /* CRT scanlines */
+  .frame::after{ content:""; position:absolute; inset:0; background: repeating-linear-gradient( to bottom, rgba(255,255,255,.04), rgba(255,255,255,.04) 1px, transparent 1px, transparent 3px ); pointer-events:none; mix-blend-mode: overlay; opacity:.25; }
+
+  #overlay{ position:absolute; inset:0; display:grid; place-items:center; background: rgba(2,8,16,.55); backdrop-filter: blur(2px); color:#eaffef; text-align:center; }
+  #overlay.hidden{ display:none; }
+  #overlay h1{ margin:0 0 10px; font-size:22px; }
+  #overlay p{ margin:0 0 12px; opacity:.9; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hud">
+      <div class="pill">Score: <span id="score">0</span></div>
+      <div class="pill">Best: <span id="best">0</span></div>
+      <button id="btn" class="btn">▶️ Start (Space)</button>
+    </div>
+    <div class="frame" id="frame">
+      <canvas id="cv" width="320" height="220" aria-label="Retro Snake Game"></canvas>
+      <div id="overlay">
+        <div>
+          <h1>Retro Snake 🐍</h1>
+          <p>Arrows / WASD to move. Eat ■ red food, don’t hit walls or yourself.</p>
+          <button id="start" class="btn">Start Game</button>
+        </div>
+      </div>
+    </div>
+    <small>Tip: it gets slightly faster with each snack. Press <b>R</b> to restart.</small>
+  </div>
+
+<script>
+(function(){
+  // --- Setup
+  const W = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--w'));
+  const H = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--h'));
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('start');
+  const btn = document.getElementById('btn');
+
+  // Match canvas logical size to CSS size exactly for sharp pixels
+  cv.width = W; cv.height = H;
+
+  const C = {
+    bg: getCSS('--bg'), fg: getCSS('--fg'), fg2: getCSS('--fg2'), food: getCSS('--food')
+  };
+
+  function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+  function rnd(n){ return (Math.random()*n)|0; }
+  const eq = (a,b)=>a.x===b.x && a.y===b.y;
+
+  // --- Audio: simple retro beeps
+  const AC = (window.AudioContext || window.webkitAudioContext);
+  let audio = AC ? new AC() : null;
+  function beep(freq=440, dur=0.07, type='square'){
+    try{
+      if(!audio) return;
+      if(audio.state==='suspended') audio.resume();
+      const t = audio.currentTime;
+      const o = audio.createOscillator();
+      const g = audio.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t);
+      g.gain.setValueAtTime(0.08, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(audio.destination);
+      o.start(t); o.stop(t + dur);
+    }catch(e){}
+  }
+
+  // --- Game state
+  let snake, dir, nextDir, food, speed, score, best = +(localStorage.getItem('retro-snake-best')||0), alive=false;
+  bestEl.textContent = best;
+
+  function reset(){
+    snake = [ {x: (W/2)|0, y:(H/2)|0} ];
+    for(let i=1;i<5;i++) snake.push({x: snake[0].x - i, y: snake[0].y});
+    dir = {x:1, y:0};
+    nextDir = {x:1, y:0};
+    speed = 8; // cells per second
+    score = 0; scoreEl.textContent = score;
+    spawnFood();
+  }
+
+  function spawnFood(){
+    do { food = {x: rnd(W), y: rnd(H)} } while (snake.some(p=>eq(p,food)));
+  }
+
+  // --- Drawing helpers
+  function px(x,y,c){ ctx.fillStyle=c; ctx.fillRect(x, y, 1, 1); }
+  function rect(x,y,w,h,c){ ctx.fillStyle=c; ctx.fillRect(x,y,w,h); }
+  function draw(){
+    // background with subtle grid
+    rect(0,0,W,H,C.bg);
+    ctx.globalAlpha = 0.15; ctx.fillStyle = '#1b2636';
+    for(let x=0;x<W;x+=2) ctx.fillRect(x,0,1,H);
+    for(let y=0;y<H;y+=2) ctx.fillRect(0,y,W,1);
+    ctx.globalAlpha = 1;
+
+    // food
+    rect(food.x, food.y, 1, 1, C.food);
+
+    // snake
+    snake.forEach((p,i)=>{ rect(p.x, p.y, 1, 1, i===0 ? C.fg : C.fg2); });
+  }
+
+  // --- Game loop (fixed time step)
+  let last = 0, acc = 0;
+  function loop(t){
+    if(!alive) return;
+    const dt = Math.min(0.05, (t - last)/1000); // seconds
+    last = t; acc += dt;
+    const step = 1/speed;
+    while(acc >= step){
+      acc -= step; tick();
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function tick(){
+    // apply buffered direction
+    if(Math.abs(nextDir.x) !== Math.abs(dir.x) || Math.abs(nextDir.y) !== Math.abs(dir.y)){
+      dir = nextDir;
+    }
+    const head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+
+    // collisions (walls)
+    if(head.x < 0 || head.y < 0 || head.x >= W || head.y >= H){
+      die(); return;
+    }
+    // collisions (self)
+    if(snake.some(p=>eq(p, head))){ die(); return; }
+
+    snake.unshift(head);
+
+    // eat food
+    if(eq(head, food)){
+      score++; scoreEl.textContent = score; beep(760, .06, 'square');
+      speed = Math.min(18, speed + 0.25);
+      spawnFood();
+    } else {
+      snake.pop();
+    }
+  }
+
+  function die(){
+    alive = false; beep(220, .12, 'sawtooth'); beep(160, .16, 'sawtooth');
+    if(score > best){ best = score; localStorage.setItem('retro-snake-best', best); }
+    bestEl.textContent = best;
+    overlay.classList.remove('hidden');
+    overlay.innerHTML = `<div><h1>Game Over 💀</h1><p>Score: <b>${score}</b> · Best: <b>${best}</b></p><button class="btn" id="again">Play Again</button></div>`;
+    overlay.querySelector('#again').addEventListener('click', start);
+  }
+
+  function start(){
+    overlay.classList.add('hidden');
+    btn.textContent = '⏸ Pause (P)';
+    reset(); alive = true; last = performance.now(); acc = 0; draw();
+    requestAnimationFrame(loop);
+  }
+
+  // --- Controls
+  window.addEventListener('keydown', (e)=>{
+    const k = e.key.toLowerCase();
+    if(k==='arrowup' || k==='w') nextDir = {x:0,y:-1};
+    else if(k==='arrowdown' || k==='s') nextDir = {x:0,y:1};
+    else if(k==='arrowleft' || k==='a') nextDir = {x:-1,y:0};
+    else if(k==='arrowright' || k==='d') nextDir = {x:1,y:0};
+    else if(k===' '){ if(!alive){ start(); } }
+    else if(k==='r'){ if(!alive){ start(); } }
+    else if(k==='p'){ togglePause(); }
+  });
+
+  btn.addEventListener('click', ()=>{ if(!alive){ start(); } else { togglePause(); } });
+  startBtn.addEventListener('click', start);
+
+  let paused = false;
+  function togglePause(){
+    if(!alive) return;
+    paused = !paused;
+    if(paused){
+      alive = false; btn.textContent = '▶️ Resume (P)';
+      overlay.classList.remove('hidden');
+      overlay.innerHTML = `<div><h1>Paused ⏸</h1><p>Press <b>P</b> to resume</p><button class="btn" id="resume">Resume</button></div>`;
+      overlay.querySelector('#resume').addEventListener('click', ()=>{ paused=false; start(); });
+    }
+  }
+
+  // First draw (title screen background grid)
+  reset(); draw();
+})();
+</script>
+</body>
+</html>
