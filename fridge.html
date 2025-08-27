@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Emoji Fridge → Recipe Finder</title>
+<style>
+  :root{
+    --bg:#0b1220; --card:#0f1b33; --ink:#e6edf3; --muted:#9fb3c8; --accent:#7dd3fc; --good:#86efac; --warn:#fca5a5;
+  }
+  html,body{height:100%}
+  body{margin:0; background: radial-gradient(1200px 600px at 50% 20%, #0f172a 0%, #0b1220 55%, #08101e 100%);
+       color:var(--ink); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;}
+  .wrap{max-width:1000px; margin:0 auto; padding:20px 16px; display:grid; gap:16px;}
+  h1{margin:0; font-size:clamp(1.2rem, 2.4vw, 1.8rem); letter-spacing:.4px}
+  .cards{display:grid; grid-template-columns: 1fr; gap:12px}
+  @media(min-width:880px){ .cards{ grid-template-columns: 1fr 1fr; } }
+
+  .card{ background: linear-gradient(180deg, rgba(255,255,255,.04), transparent 60%), var(--card);
+         border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:14px; box-shadow: 0 18px 44px rgba(0,0,0,.35);
+       }
+  .flex{ display:flex; gap:10px; align-items:center; flex-wrap:wrap }
+  .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  .muted{ color:var(--muted) }
+  .btn{ appearance:none; border:1px solid rgba(255,255,255,.12); background:#142442; color:var(--ink); padding:8px 12px; border-radius:12px; font-weight:700; cursor:pointer }
+  .btn:disabled{ opacity:.6; cursor:not-allowed }
+  input[type="text"]{ background:#0c1a34; border:1px solid rgba(255,255,255,.14); color:var(--ink); border-radius:10px; padding:10px 12px; outline:none; width:100% }
+
+  /* Pantry grid */
+  .pantry{ display:grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); gap:8px; }
+  .tile{ background:#0c1a34; border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:8px; display:grid; place-items:center; cursor:pointer; user-select:none; transition:.15s transform; }
+  .tile:hover{ transform: translateY(-1px) }
+  .tile .em{ font-size: 28px; line-height:1 }
+  .tile .nm{ font-size: 12px; opacity:.85; margin-top:4px }
+  .tile.sel{ outline:2px solid var(--accent); box-shadow: 0 0 0 4px rgba(125,211,252,.15) inset }
+
+  /* Basket */
+  .basket{ display:flex; gap:6px; flex-wrap:wrap; min-height:40px }
+  .chip{ background:#0c1a34; border:1px solid rgba(255,255,255,.14); padding:6px 8px; border-radius:999px; display:flex; align-items:center; gap:6px }
+  .chip .em{ font-size:18px }
+  .chip button{ border:0; background:transparent; color:var(--muted); cursor:pointer; padding:0 2px; }
+
+  .recipes{ display:grid; gap:10px }
+  .r{ background:#0b1933; border:1px solid rgba(255,255,255,.1); border-radius:14px; padding:12px }
+  .r h3{ margin:.1rem 0 .35rem 0; font-size:1rem }
+  .r .ing{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:18px }
+  .badge{ font-size:11px; padding:4px 6px; border-radius:999px; background:#132a52; border:1px solid rgba(255,255,255,.12) }
+  details{ margin-top:6px }
+  summary{ cursor:pointer }
+  .needs{ color: var(--warn) }
+  .ok{ color: var(--good) }
+
+  .foot{ color:#91a6bd; font-size:12px; text-align:center; margin-top:2px }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🧊 Emoji Fridge → Recipe Finder</h1>
+    <p class="muted">Click ingredients (or type emojis) to fill your basket. Then <b>Find recipes</b> or <b>Freestyle create</b>. All graphics are emojis, and it runs fully offline.</p>
+
+    <div class="cards">
+      <div class="card">
+        <div class="row" style="gap:10px; align-items:flex-start">
+          <div style="flex:1">
+            <label class="muted">Type to filter (you can also paste emojis):</label>
+            <input id="filter" type="text" placeholder="🍅 🧄 egg pasta rice cheese ..." />
+          </div>
+          <div class="row">
+            <button id="clear" class="btn" title="Clear selection">Clear</button>
+            <button id="random" class="btn" title="Random basket">🎲 Random</button>
+          </div>
+        </div>
+        <div class="pantry" id="pantry"></div>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <div>
+            <div class="muted">Your basket</div>
+            <div id="basket" class="basket"></div>
+          </div>
+          <div class="row">
+            <button id="find" class="btn">🔎 Find recipes</button>
+            <button id="create" class="btn">✨ Freestyle create</button>
+          </div>
+        </div>
+        <div class="recipes" id="results" style="margin-top:10px"></div>
+      </div>
+    </div>
+
+    <div class="foot">Tip: Your selection is saved locally so you can come back later. — Want me to add your own recipes? We can extend the database in seconds.</div>
+  </div>
+
+<script>
+(() => {
+  // --- Pantry definition (emoji + name)
+  const pantry = [
+    {em:'🥚', n:'egg'}, {em:'🍅', n:'tomato'}, {em:'🧅', n:'onion'}, {em:'🧄', n:'garlic'}, {em:'🥔', n:'potato'},
+    {em:'🥦', n:'broccoli'}, {em:'🍄', n:'mushroom'}, {em:'🥬', n:'leafy greens'}, {em:'🌽', n:'corn'}, {em:'🫘', n:'beans'},
+    {em:'🍗', n:'chicken'}, {em:'🐟', n:'fish'}, {em:'🧀', n:'cheese'}, {em:'🥛', n:'milk'}, {em:'🧈', n:'butter'},
+    {em:'🍝', n:'pasta'}, {em:'🍚', n:'rice'}, {em:'🍞', n:'bread'}, {em:'🌮', n:'taco shell'}, {em:'🌯', n:'tortilla'},
+    {em:'🍋', n:'lemon'}, {em:'🌶️', n:'chili'}, {em:'🧂', n:'salt'}, {em:'🫑', n:'bell pepper'}, {em:'🍓', n:'strawberry'},
+    {em:'🍌', n:'banana'}, {em:'🫐', n:'blueberries'}, {em:'🥫', n:'canned tomato'}
+  ];
+
+  // --- Tiny recipe DB (exact-match finder prefers these)
+  const db = [
+    R('Tomato Garlic Pasta 🍝', ['🍝','🍅','🧄','🧈','🧂','🧀'], `Boil pasta. Sauté 🧄 in 🧈, add 🍅 (or 🥫), simmer 6–8 min. Toss pasta, season with 🧂, top with 🧀.`),
+    R('Cheesy Rice & Broccoli 🥦', ['🍚','🥦','🧀','🧂','🧈'], `Steam 🥦. Warm 🍚 with a knob of 🧈, fold in 🥦 + 🧀 until melty. Season.`),
+    R('Veggie Omelet 🥚', ['🥚','🍅','🧅','🧀','🧂'], `Beat 🥚 with 🧂. Sauté 🍅 + 🧅, add 🥚, sprinkle 🧀, fold when set.`),
+    R('Garlic Lemon Fish 🐟', ['🐟','🧄','🍋','🧂'], `Season 🐟 with 🧂, sear in oil/butter. Add 🧄 + 🍋 juice to pan, spoon over to glaze.`),
+    R('Chicken & Rice Bowl 🍗', ['🍗','🍚','🧅','🧂'], `Pan‑cook 🍗 with 🧅 until done. Serve over 🍚, season.`),
+    R('Grilled Cheese 🥪', ['🍞','🧀','🧈'], `Butter 🍞, sandwich 🧀 inside, grill both sides until golden.`),
+    R('Quesadilla 🌯', ['🌯','🧀','🍅','🧅'], `Warm 🌯 in pan, add 🧀 + veg, fold, crisp both sides.`),
+    R('Rice & Beans 🫘', ['🍚','🫘','🧅','🧄','🧂'], `Sauté 🧄+🧅, stir in 🫘, fold with hot 🍚. Season.`),
+    R('Tomato Toast 🍞', ['🍞','🍅','🧂'], `Toast 🍞, rub with cut 🧄 (opt), top with ripe 🍅 slices, drizzle oil, 🧂.`),
+    R('Simple Salad 🥬', ['🥬','🍅','🧅','🍋','🧂'], `Toss chopped 🥬, 🍅, 🧅 with 🍋 juice + oil + 🧂.`),
+    R('Mushroom Pasta 🍄', ['🍝','🍄','🧄','🧈','🧂'], `Sauté 🍄 in 🧈, add 🧄. Toss with 🍝 + a splash of pasta water. 🧂 to taste.`),
+    R('Banana Berry Smoothie 🥤', ['🍌','🍓','🫐','🥛'], `Blend fruit with 🥛 until smooth.`),
+    R('Roasted Potatoes 🥔', ['🥔','🧄','🧂'], `Cube 🥔, toss with oil, 🧄, 🧂. Roast 425°F/220°C ~25–35 min.`),
+    R('Shakshuka Lite 🍳', ['🥫','🥚','🧅','🧄','🧂'], `Simmer 🥫 with 🧅+🧄, crack in 🥚, cover until set. Season.`)
+  ];
+  function R(title, ings, steps){ return {title, ings, steps} }
+
+  // --- UI references
+  const pantryEl = $('#pantry');
+  const basketEl = $('#basket');
+  const filterEl = $('#filter');
+  const resultsEl = $('#results');
+  const findBtn = $('#find');
+  const createBtn = $('#create');
+  const clearBtn = $('#clear');
+  const randomBtn = $('#random');
+
+  // --- State
+  const selected = new Set(JSON.parse(localStorage.getItem('emoji-basket')||'[]'));
+  const save = ()=> localStorage.setItem('emoji-basket', JSON.stringify([...selected]));
+
+  // --- Render pantry
+  function renderPantry(){
+    const q = filterEl.value.trim().toLowerCase();
+    pantryEl.innerHTML = '';
+    pantry
+      .filter(p => !q || p.n.includes(q) || [...q].some(ch => ch===p.em))
+      .forEach(p => {
+        const t = el('div','tile' + (selected.has(p.em)?' sel':''));
+        t.innerHTML = `<div class="em">${p.em}</div><div class="nm">${p.n}</div>`;
+        t.title = p.n;
+        t.addEventListener('click',()=>{ toggle(p.em) });
+        pantryEl.appendChild(t);
+      });
+  }
+  function toggle(em){ if(selected.has(em)) selected.delete(em); else selected.add(em); save(); renderPantry(); renderBasket(); }
+
+  // --- Basket chips
+  function renderBasket(){
+    basketEl.innerHTML = '';
+    if(selected.size===0){ basketEl.innerHTML = `<span class="muted">(nothing yet)</span>`; return; }
+    [...selected].forEach(em => {
+      const nm = pantry.find(p=>p.em===em)?.n || '';
+      const c = el('span','chip');
+      c.innerHTML = `<span class="em">${em}</span><span>${nm}</span><button title="Remove">✕</button>`;
+      c.querySelector('button').addEventListener('click', ()=>{ toggle(em) });
+      basketEl.appendChild(c);
+    });
+  }
+
+  // --- Finder
+  function findRecipes(){
+    const sel = new Set(selected);
+    const scored = db.map(r => {
+      const have = r.ings.filter(x=>sel.has(x));
+      const miss = r.ings.filter(x=>!sel.has(x));
+      return {r, have, miss, score: have.length / r.ings.length};
+    }).sort((a,b)=> b.score - a.score);
+
+    const perfect = scored.filter(s=>s.miss.length===0);
+    const near = scored.filter(s=>s.miss.length>0 && s.miss.length<=2);
+
+    resultsEl.innerHTML = '';
+    if(perfect.length){ addHeader('✅ Perfect matches'); perfect.forEach(renderRecipe); }
+    if(near.length){ addHeader('🧩 Almost there (missing 1–2)'); near.slice(0,6).forEach(renderRecipe); }
+    if(!perfect.length && !near.length){ resultsEl.innerHTML = `<div class="muted">No matches found. Try Freestyle create ✨</div>`; }
+  }
+
+  function addHeader(text){ const d = el('div'); d.className='muted'; d.style.margin='6px 4px'; d.textContent=text; resultsEl.appendChild(d); }
+
+  function renderRecipe(s){
+    const card = el('div','r');
+    const icons = s.r.ings.map(x=>`<span>${x}</span>`).join(' ');
+    const needTxt = s.miss.length ? `<span class="badge needs">missing: ${s.miss.join(' ')}</span>` : `<span class="badge ok">you have all</span>`;
+    card.innerHTML = `<h3>${s.r.title}</h3>
+      <div class="ing">${icons} ${needTxt}</div>
+      <details><summary>Steps</summary><div style="margin-top:6px" class="muted">${s.r.steps}</div></details>
+      <div class="row" style="margin-top:8px">
+        <button class="btn copy">Copy</button>
+      </div>`;
+    card.querySelector('.copy').addEventListener('click',()=>{
+      navigator.clipboard.writeText(`${s.r.title}\nIngredients: ${s.r.ings.join(' ')}\n\n${s.r.steps}`);
+      toast('Copied');
+    });
+    resultsEl.appendChild(card);
+  }
+
+  // --- Freestyle creator (rule-based)
+  function freestyle(){
+    const S = (em)=>selected.has(em);
+    const hasAny = (...ems)=>ems.some(S);
+    const picks = [];
+    function push(title, ings, steps){ picks.push({title, ings, steps}); }
+
+    if(S('🍝')){
+      const add = ['🍅','🧄','🧈','🧀'].filter(S);
+      push('Freestyle Pasta 🍝', ['🍝',...add, '🧂'], `Boil 🍝. Sauté ${S('🧄')?'🧄':''} in ${S('🧈')?'🧈':'oil'}, add ${S('🍅')?'🍅/🥫':'a splash of pasta water'}, simmer, toss with pasta. Season and top with ${S('🧀')?'🧀':'herbs (opt)'}.'`);
+    }
+    if(S('🍚')){
+      push(`Quick Fried Rice 🍚`, ['🍚', ...(S('🥚')?['🥚']:[]), ...['🧄','🧅','🥦','🌽','🫘'].filter(S), '🧂'], `Stir‑fry ${['🧄','🧅'].filter(S).join(' ')} in oil, add veg ${['🥦','🌽','🫘'].filter(S).join(' ')}. Push aside, scramble ${S('🥚')?'🥚 ':''}then fold in 🍚. Season.`);
+    }
+    if(S('🥚')){
+      push('Any‑Veg Omelet 🥚', ['🥚', ...['🍅','🧅','🫑','🍄','🥬'].filter(S), ...(S('🧀')?['🧀']:[])], `Beat 🥚 with a pinch of 🧂. Sauté your veg, add 🥚, sprinkle ${S('🧀')?'🧀':'herbs'}, fold when set.`);
+    }
+    if(S('🍞')){
+      push('Toast Combo 🍞', ['🍞', ...['🧀','🍅','🥚','🫘'].filter(S)], `Toast 🍞. Top with ${S('🧀')?'🧀':''}${S('🍅')?' + 🍅':''}${S('🥚')?' + fried 🥚':''}${S('🫘')?' + 🫘':''}. Drizzle oil, pinch 🧂.`);
+    }
+    if(S('🐟')){
+      push('Pan‑Seared Fish 🐟', ['🐟', ...['🧄','🍋','🧂','🧈'].filter(S)], `Season 🐟. Sear in ${S('🧈')?'🧈':'oil'} 2–3 min/side. Finish with ${S('🧄')?'🧄 + ':''}${S('🍋')?'🍋 juice':''}.`);
+    }
+    if(S('🍗')){
+      push('Skillet Chicken 🍗', ['🍗', ...['🧄','🧅','🍋','🧂'].filter(S)], `Brown 🍗, add ${['🧄','🧅'].filter(S).join(' ')}, splash water, cover until done. Brighten with ${S('🍋')?'🍋':''}.`);
+    }
+    if(S('🫘') && hasAny('🍅','🥫')){
+      push('Speedy Bean Chili 🫘', ['🫘', (S('🥫')?'🥫':'🍅'), ...['🧅','🧄','🌶️','🧂'].filter(S)], `Sauté aromatics, add beans + tomatoes, simmer 10–15 min. ${S('🌶️')?'Add 🌶️ for heat.':''}`);
+    }
+    if(S('🥛') && hasAny('🍌','🍓','🫐')){
+      const fruits = ['🍌','🍓','🫐'].filter(S);
+      push('Smoothie 🥤', [...fruits, '🥛'], `Blend ${fruits.join(' ')} with 🥛 until smooth.`);
+    }
+    if(S('🥔')){
+      push('Pan‑Roasted Potatoes 🥔', ['🥔', ...['🧄','🧂'].filter(S)], `Cube 🥔. Pan‑fry in oil with ${S('🧄')?'🧄, ':''}salt until crisp and tender.`);
+    }
+    if(S('🥬')){
+      push('Bright Green Salad 🥬', ['🥬', ...['🍅','🧅','🍋','🧂'].filter(S)], `Toss chopped greens with ${S('🍋')?'🍋 + oil':'oil + vinegar'}, add veg, pinch 🧂.`);
+    }
+
+    resultsEl.innerHTML = '';
+    if(!picks.length){ resultsEl.innerHTML = `<div class="muted">No obvious idea found—try adding 🍝, 🍚, 🥚, 🍞, or 🫘 for base carbs/protein.</div>`; return; }
+    picks.forEach(p => {
+      const card = el('div','r');
+      card.innerHTML = `<h3>${p.title}</h3>
+        <div class="ing">${p.ings.map(x=>`<span>${x}</span>`).join(' ')}</div>
+        <details open><summary>Steps</summary><div class="muted" style="margin-top:6px">${p.steps}</div></details>
+        <div class="row" style="margin-top:8px"><button class="btn copy">Copy</button></div>`;
+      card.querySelector('.copy').addEventListener('click',()=>{
+        navigator.clipboard.writeText(`${p.title}\nIngredients: ${p.ings.join(' ')}\n\n${p.steps}`);
+        toast('Copied');
+      });
+      resultsEl.appendChild(card);
+    });
+  }
+
+  // --- Helpers
+  function $(q){ return document.querySelector(q); }
+  function el(tag, cls){ const d = document.createElement(tag); if(cls) d.className = cls; return d; }
+
+  function toast(text){
+    const t = el('div'); t.textContent = text; t.style.cssText = `position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#10254a;color:#e6edf3;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.14);opacity:0;transition:.2s`;
+    document.body.appendChild(t); requestAnimationFrame(()=>{ t.style.opacity = 1; });
+    setTimeout(()=>{ t.style.opacity = 0; setTimeout(()=>t.remove(), 180); }, 900);
+  }
+
+  // --- Wiring
+  filterEl.addEventListener('input', renderPantry);
+  findBtn.addEventListener('click', findRecipes);
+  createBtn.addEventListener('click', freestyle);
+  clearBtn.addEventListener('click', ()=>{ selected.clear(); save(); renderPantry(); renderBasket(); resultsEl.innerHTML=''; });
+  randomBtn.addEventListener('click', ()=>{
+    selected.clear();
+    const pool = [...pantry];
+    for(let i=0;i<6;i++){ const pick = pool.splice(Math.floor(Math.random()*pool.length),1)[0]; if(pick) selected.add(pick.em); }
+    save(); renderPantry(); renderBasket();
+  });
+
+  // Initial render
+  renderPantry(); renderBasket();
+})();
+</script>
+</body>
+</html>
