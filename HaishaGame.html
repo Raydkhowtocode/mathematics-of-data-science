@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Coquette Dash 💖</title>
+<style>
+  :root{
+    --pink:#ffd7eb; --rose:#f9c2d1; --cream:#fff8f1; --ink:#2a2a2a; --accent:#ff7eb6; --bow:#ff85c0; --bg:#fff0f6;
+  }
+  html,body{height:100%}
+  body{margin:0; display:grid; place-items:center; background: radial-gradient(circle at 50% 20%, var(--pink), var(--bg)); font-family: ui-rounded, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color:var(--ink)}
+  .frame{ position:relative; width:min(92vw, 720px); aspect-ratio: 16/9; border-radius:22px; overflow:hidden; box-shadow: 0 30px 80px rgba(255, 126, 182, .35), inset 0 0 0 2px rgba(255, 126, 182, .35); background: linear-gradient(180deg, var(--cream), #fff); }
+  canvas{ width:100%; height:100%; display:block; background: linear-gradient(180deg, #ffeef6, #fff); }
+
+  /* Intro overlay */
+  #intro{ position:absolute; inset:0; display:grid; place-items:center; padding:18px; background: linear-gradient(180deg, rgba(255,255,255,.7), rgba(255,240,246,.95)); text-align:center; }
+  .card{ background: rgba(255,255,255,.8); border:2px solid var(--rose); border-radius:20px; padding:18px 20px; box-shadow: 0 10px 30px rgba(255, 126, 182, .25); }
+  .title{ font-weight:900; font-size: clamp(20px, 3.2vw, 32px); letter-spacing:.3px; }
+  .bows{ font-size: 22px; margin: 6px 0 10px; }
+  .muted{ opacity:.7; font-size: 14px }
+  .btn{ appearance:none; border:0; padding:10px 14px; border-radius:14px; font-weight:800; cursor:pointer; background: var(--accent); color:white; box-shadow: 0 6px 16px rgba(255,126,182,.35); }
+  .row{ display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap }
+
+  /* HUD */
+  .hud{ position:absolute; left:10px; top:10px; display:flex; gap:10px; align-items:center; font-weight:800; background: rgba(255,255,255,.6); border-radius:999px; padding:6px 10px; border:1px solid rgba(255,126,182,.35); }
+  .hud .pill{ background: #fff; padding:4px 8px; border-radius:999px; border:1px solid rgba(255,126,182,.35) }
+
+  /* Decorative corner bows */
+  .bow{ position:absolute; font-size:26px; filter: drop-shadow(0 3px 2px rgba(0,0,0,.1)); }
+  .bow.tl{ left:10px; top:8px } .bow.tr{ right:10px; top:8px } .bow.bl{ left:10px; bottom:8px } .bow.br{ right:10px; bottom:8px }
+</style>
+</head>
+<body>
+  <div class="frame" id="frame">
+    <span class="bow tl">🎀</span><span class="bow tr">🎀</span><span class="bow bl">🎀</span><span class="bow br">🎀</span>
+    <canvas id="cv" width="640" height="360" aria-label="Coquette Dash Game"></canvas>
+
+    <div class="hud"><span class="pill">Score: <span id="score">0</span></span><span class="pill">Best: <span id="best">0</span></span></div>
+
+    <div id="intro">
+      <div class="card">
+        <div class="title">Coquette Dash 💖</div>
+        <div class="bows">🎀 💐 🎀 🌸 🎀</div>
+        <p class="muted">A sweet little sprint — catch the puff of wind for sparkly points.
+          <br>Controls: <b>WASD / Arrows</b> to move, <b>Space</b> to dash.</p>
+        <div class="row"><button id="start" class="btn">Start</button></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(()=>{
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const intro = document.getElementById('intro');
+  const startBtn = document.getElementById('start');
+
+  // Game state
+  const W = cv.width, H = cv.height;
+  let player, target, score=0, best=+(localStorage.getItem('coquette-best')||0), running=false;
+  bestEl.textContent = best;
+
+  function reset(){
+    player = { x: W*0.15, y: H*0.5, vx:0, vy:0, speed: 170, dash:0 };
+    spawnTarget();
+    score = 0; scoreEl.textContent = score;
+  }
+  function spawnTarget(){
+    target = { x: rand( W*0.45, W*0.9 ), y: rand( H*0.15, H*0.85 ), r: 18, vx: rand(-40, 80), vy: rand(-40, 80)};
+  }
+
+  // Input
+  const keys = new Set();
+  window.addEventListener('keydown', e=>{ keys.add(e.key.toLowerCase()); if(e.key===' '){ e.preventDefault(); dash(); } });
+  window.addEventListener('keyup', e=>{ keys.delete(e.key.toLowerCase()); });
+
+  function dash(){ if(player.dash<=0){ player.dash = 0.26; playPfft(); } }
+
+  // Loop
+  let last=0;
+  function loop(t){
+    if(!running) return;
+    const dt = Math.min(0.033, (t-last)/1000); last = t;
+    update(dt); draw();
+    requestAnimationFrame(loop);
+  }
+
+  function update(dt){
+    // move player
+    let ax=0, ay=0;
+    if(keys.has('arrowup')||keys.has('w')) ay -= 1;
+    if(keys.has('arrowdown')||keys.has('s')) ay += 1;
+    if(keys.has('arrowleft')||keys.has('a')) ax -= 1;
+    if(keys.has('arrowright')||keys.has('d')) ax += 1;
+    const mag = Math.hypot(ax,ay) || 1;
+    const spd = player.speed * (player.dash>0 ? 2.3 : 1);
+    player.vx = (ax/mag) * spd;
+    player.vy = (ay/mag) * spd;
+
+    player.x = clamp(player.x + player.vx*dt, 14, W-14);
+    player.y = clamp(player.y + player.vy*dt, 14, H-14);
+
+    // dash timer
+    player.dash = Math.max(0, player.dash - dt);
+
+    // target moves & bounces
+    target.x += target.vx*dt; target.y += target.vy*dt;
+    if(target.x < 14 || target.x > W-14) target.vx *= -1;
+    if(target.y < 14 || target.y > H-14) target.vy *= -1;
+
+    // collision check
+    if(dist(player.x,player.y,target.x,target.y) < 26){
+      score++; scoreEl.textContent = score; sparkle(); playPfft(); spawnTarget();
+    }
+  }
+
+  function draw(){
+    // background
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0, '#fff6fb'); g.addColorStop(1, '#fff');
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+
+    // subtle grid
+    ctx.globalAlpha = 0.08; ctx.strokeStyle = '#f3d1e0';
+    for(let x=0;x<W;x+=32){ line(x,0,x,H); }
+    for(let y=0;y<H;y+=32){ line(0,y,W,y); }
+    ctx.globalAlpha = 1;
+
+    // target (wind puff)
+    ctx.font = '28px Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.save();
+    ctx.translate(target.x, target.y);
+    ctx.fillText('💨', 0, 0);
+    ctx.restore();
+
+    // player (sparkle)
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.fillText('✨', 0, 0);
+    ctx.restore();
+  }
+
+  // Pretty lines helper
+  function line(x1,y1,x2,y2){ ctx.beginPath(); ctx.moveTo(x1+.5,y1+.5); ctx.lineTo(x2+.5,y2+.5); ctx.stroke(); }
+
+  // Sparkle effect (quick flash)
+  function sparkle(){
+    const s = 280; const n = 10;
+    for(let i=0;i<n;i++) setTimeout(()=>{ drawStar(target.x + rand(-10,10), target.y + rand(-10,10)); }, i*16);
+  }
+  function drawStar(x,y){
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,126,182,.8)';
+    ctx.beginPath();
+    ctx.arc(x,y, 3 + Math.random()*3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Small audio: a soft “pfft” using noise burst
+  let ac; function ensureAC(){ if(!ac){ const AC = window.AudioContext||window.webkitAudioContext; ac = AC? new AC(): null; } }
+  function playPfft(){ ensureAC(); if(!ac) return; const dur=0.12; const sr=ac.sampleRate; const buf=ac.createBuffer(1, sr*dur, sr); const data=buf.getChannelData(0);
+    for(let i=0;i<data.length;i++){ const t=i/sr; const env=Math.exp(-t*16); data[i] = (Math.random()*2-1) * env * 0.6; }
+    const src=ac.createBufferSource(); const g=ac.createGain(); g.gain.value=0.35; src.buffer=buf; src.connect(g).connect(ac.destination); if(ac.state==='suspended') ac.resume(); src.start(); }
+
+  // Utils
+  const rand=(a,b)=> a + Math.random()*(b-a);
+  const clamp=(v,a,b)=> Math.max(a, Math.min(b, v));
+  const dist=(x1,y1,x2,y2)=> Math.hypot(x2-x1, y2-y1);
+
+  // Start
+  function start(){ reset(); intro.style.display='none'; running=true; last=performance.now(); requestAnimationFrame(loop); }
+  startBtn.addEventListener('click', start);
+})();
+</script>
+</body>
+</html>
